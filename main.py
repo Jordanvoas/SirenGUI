@@ -13,6 +13,7 @@ from collections import OrderedDict
 matplotlib.use("Qt5Agg")
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
+import time
 
 def RemapRange(value, low1, high1, low2, high2):
     return low2 + (value - low1) * (high2 - low2) / (high1 - low1)
@@ -105,7 +106,7 @@ class SineLayer(nn.Module):
     # activations constant, but boost gradients to the weight matrix (see supplement Sec. 1.5)
 
     def __init__(self, in_features, out_features, bias=True,
-                 is_first=False, omega_0=30):
+                 is_first=False, omega_0=5):
         super().__init__()
         self.omega_0 = omega_0
         self.is_first = is_first
@@ -135,7 +136,7 @@ class SineLayer(nn.Module):
 
 class Siren(nn.Module):
     def __init__(self, in_features, hidden_features, hidden_layers, out_features, outermost_linear=False,
-                 first_omega_0=30, hidden_omega_0=30.):
+                 first_omega_0=8, hidden_omega_0=8.):
         super().__init__()
 
         self.net = []
@@ -288,6 +289,7 @@ class CrowdPathDataset(torch.utils.data.Dataset):
             for i in range(len(trajectory) - 1):
                 interp = np.random.random(1)[0]
                 pos = avgDiff(trajectory[i], trajectory[i + 1], interp)
+
                 # print(trajectory[i])
                 # print(trajectory[i+1])
                 # print(pos)
@@ -419,9 +421,54 @@ class FieldInspector(QtWidgets.QMainWindow):
 
         self.xline_samples = 32
         self.mapped_ranges = [(self.low_bound[0] - self.buffer, self.low_bound[1] - self.buffer), (self.high_bound[0] + self.buffer, self.high_bound[1] + self.buffer)]
+        self.xline_samples_frame = QtWidgets.QFrame()
+        self.xline_samples_layout = QtWidgets.QVBoxLayout(self.xline_samples_frame)
+        self.xline_samples_layout.setSpacing(5)
+        self.xline_samples_layout.addStretch(1)
+        self.xline_samples_frame.setFrameShape(QtWidgets.QFrame.StyledPanel)
+        self.xline_samples_frame.setFrameShadow(QtWidgets.QFrame.Raised)
+        self.xline_samples_label = QtWidgets.QLabel("Num Horizontal Samples: ", self.xline_samples_frame)
+        self.xline_samples_label.setAlignment(Qt.AlignCenter)
+        self.xline_samples_edit = QtWidgets.QLineEdit(str(self.xline_samples), self.xline_samples_frame)
+        self.xline_samples_edit.setAlignment(Qt.AlignCenter)
+        self.xline_samples_button = QtWidgets.QPushButton("Ok", self.xline_samples_frame)
+        self.xline_samples_button.clicked.connect(self.updateXSamples)
+        self.xline_samples_layout.addWidget(self.xline_samples_label)
+        self.xline_samples_layout.addWidget(self.xline_samples_edit)
+        self.xline_samples_layout.addWidget(self.xline_samples_button)
+        self.xline_samples_edit.setText(str(self.xline_samples))
+
+        self.display_options_frame = QtWidgets.QFrame()
+        self.display_options_layout = QtWidgets.QVBoxLayout(self.display_options_frame)
+        self.display_options_layout.setSpacing(5)
+        self.display_options_layout.addStretch(1)
+        self.display_options_frame.setFrameShape(QtWidgets.QFrame.StyledPanel)
+        self.display_options_frame.setFrameShadow(QtWidgets.QFrame.Raised)
+        self.gradient_checkbox = QtWidgets.QCheckBox(" : Show Gradient Arrows", self.display_options_frame)
+        self.display_options_layout.addWidget(self.gradient_checkbox)
+        self.gradient_checkbox.setChecked(True)
+        self.gradient_checkbox.clicked.connect(self.generate_network_field_event)
+
+        self.path_options_frame = QtWidgets.QFrame()
+        self.path_options_layout = QtWidgets.QVBoxLayout(self.path_options_frame)
+        self.path_options_layout.setSpacing(5)
+        self.path_options_layout.addStretch(1)
+        self.path_options_frame.setFrameShape(QtWidgets.QFrame.StyledPanel)
+        self.path_options_frame.setFrameShadow(QtWidgets.QFrame.Raised)
+        self.path_mode_combobox = QtWidgets.QComboBox(self.display_options_frame)
+        self.path_mode_combobox.addItem("Draw Crowd Paths")
+        self.path_mode_combobox.addItem("Draw Obstacle Paths")
+        self.path_mode_combobox.addItem("Place Drop Test")
+        self.path_options_layout.addWidget(self.path_mode_combobox)
+
 
         self.layout = QtWidgets.QHBoxLayout()
-        #self.layout.addWidget(self.network_label)
+        self.control_panel = QtWidgets.QGridLayout()
+        self.control_panel.setAlignment(Qt.AlignTop)
+        self.control_panel.addWidget(self.xline_samples_frame, 0, 0)
+        self.control_panel.addWidget(self.display_options_frame, 1, 0)
+        self.control_panel.addWidget(self.path_options_frame, 2, 0)
+        self.layout.addLayout(self.control_panel)
         self.layout.addWidget(self.gradient_label)
 
         self.central_widget = QtWidgets.QWidget()
@@ -429,6 +476,7 @@ class FieldInspector(QtWidgets.QMainWindow):
         self.setCentralWidget(self.central_widget)
         self.setMouseTracking(True)
         self.paths = []
+        self.obstacles = []
         self.points = []
         self.lines = [[[0], [0]]]
         self.prev_focus = -1
@@ -436,6 +484,19 @@ class FieldInspector(QtWidgets.QMainWindow):
         self.setup_siren()
         self.generate_network_field()
         self.setup_tool_bar()
+    def generate_network_field_event(self, e):
+        self.generate_network_field()
+    def updateXSamples(self, e):
+        saved_xlinesamples = self.xline_samples
+        text = self.xline_samples_edit.text()
+        try:
+            self.xline_samples = int(self.xline_samples_edit.text())
+            if (self.xline_samples < 5 or self.xline_samples > 200):
+                raise Exception()
+            self.generate_network_field()
+        except:
+            self.xline_samples = self.xline_samples
+            self.xline_samples_edit.setText("Invalid Entry: " + text)
 
     def setup_siren(self):
         self.nn = Siren(in_features=2, hidden_features=32, hidden_layers=3, out_features=1, outermost_linear=True)
@@ -465,16 +526,18 @@ class FieldInspector(QtWidgets.QMainWindow):
         actionmenu.addAction(trainAct)
 
     def train_paths_and_reload(self):
-        if (len(self.paths) == 0):
+        if (len(self.paths) and len(self.obstacles)):
             return
         conv_paths = {}
         for path in range(len(self.paths)):
-            conv_paths[path] = list(map(lambda point: (point[0], point[1]), self.paths[path].sampled_points))
-
-        num_epochs = 1000
+            conv_paths[path] = list(map(lambda point: (point[0], point[1]), self.paths[path].sampled_points[::5]))
+        conv_obstacles = {}
+        for obstacle in range(len(self.obstacles)):
+            conv_obstacles[obstacle] = list(map(lambda point: (point[0], point[1]), self.obstacles[obstacle].sampled_points[::5]))
+        num_epochs = 100
         learning_rate = 1e-4
         loss_function = gradients_mse_with_coords
-        train_data_set = CrowdPathDataset(conv_paths, multiplier=1000)
+        train_data_set = CrowdPathDataset(conv_paths, conv_obstacles, multiplier=1)
         train_data_generator = torch.utils.data.DataLoader(train_data_set, batch_size=1, shuffle=True)
         optimizer = torch.optim.Adam(self.nn.parameters(), lr=learning_rate)
 
@@ -483,6 +546,7 @@ class FieldInspector(QtWidgets.QMainWindow):
 
         self.generate_network_field()
         self.paths = []
+        self.obstacles = []
 
 
     def export_paths(self):
@@ -498,9 +562,8 @@ class FieldInspector(QtWidgets.QMainWindow):
     def generate_network_field(self):
         sample_res = (self.mapped_ranges[1][0] - self.mapped_ranges[0][0]) / self.xline_samples
         num_y_samples = int((self.mapped_ranges[1][1] - self.mapped_ranges[0][0]) / sample_res)
-        print(self.xline_samples, num_y_samples, sample_res)
-        sample_coords = [np.array(((i + 0.5) * sample_res + self.mapped_ranges[0][0], (j + 0.5) * sample_res + self.mapped_ranges[0][1])) for i in range(self.xline_samples) for j in range(num_y_samples)]
-        sample_coords_nn_preped = torch.unsqueeze(torch.from_numpy(np.array(sample_coords, dtype=np.float32)), 0)
+        sample_coords_offset = [np.array(((i + 0.5) * sample_res, (j + 0.5) * sample_res)) for i in range(self.xline_samples) for j in range(num_y_samples)]
+        sample_coords_nn_preped = torch.unsqueeze(torch.from_numpy(np.array(sample_coords_offset, dtype=np.float32)), 0)
         potential_samples = self.nn(sample_coords_nn_preped)
         ax = self.gradient_plot.figure.subplots(1, 1)
         self.ax = ax
@@ -518,23 +581,72 @@ class FieldInspector(QtWidgets.QMainWindow):
 
         gradient_potential_samples = gradient_potential_samples[0].cpu().view(self.xline_samples, num_y_samples, 2).detach().numpy()
         #print(gradient_potential_samples.shape)
-        coord_x, coord_y = np.meshgrid(list(map(lambda v: RemapRange(v + 0.5, 0, self.xline_samples, self.mapped_ranges[0][0], self.mapped_ranges[1][0]), range(self.xline_samples))), list(map(lambda v: RemapRange(v + 0.5, 0, num_y_samples, self.mapped_ranges[0][1], self.mapped_ranges[1][1]), range(num_y_samples))))
-        vx = gradient_potential_samples[:,:,0].flatten('F')
-        vy = gradient_potential_samples[:,:,1].flatten('F')
-        ux = vx/np.sqrt(vx**2 + vy**2)
-        uy = vy/np.sqrt(vx**2 + vy**2)
-        ax.quiver(coord_x, coord_y, ux, uy, color='red')
+        if (self.gradient_checkbox.isChecked()):
+            coord_x, coord_y = np.meshgrid(list(map(lambda v: RemapRange(v + 0.5, 0, self.xline_samples, self.mapped_ranges[0][0], self.mapped_ranges[1][0]), range(self.xline_samples))), list(map(lambda v: RemapRange(v + 0.5, 0, num_y_samples, self.mapped_ranges[0][1], self.mapped_ranges[1][1]), range(num_y_samples))))
+            vx = gradient_potential_samples[:,:,0].flatten('F')
+            vy = gradient_potential_samples[:,:,1].flatten('F')
+            ux = vx/np.sqrt(vx**2 + vy**2)
+            uy = vy/np.sqrt(vx**2 + vy**2)
+            ax.quiver(coord_x, coord_y, ux, uy, color='red')
         self.gradient_plot.figure.savefig("temp_fig.png")
         self.gradient_canvas = QtGui.QPixmap("temp_fig.png")
         self.gradient_label.setPixmap(self.gradient_canvas)
 
     def mouseReleaseEvent(self, event):
+        if (self.path_mode_combobox.currentIndex() == 2):
+            corrected_pos = np.array((self.mapped_ranges[0][0] + (self.mapped_ranges[1][0] - self.mapped_ranges[0][0]) * (event.x() - self.gradient_label.x()) / self.gradient_canvas.width(), self.mapped_ranges[0][1] + (self.mapped_ranges[1][1] - self.mapped_ranges[0][1]) * (event.y() - self.gradient_label.y()) / self.gradient_canvas.height()))
+            drop_path = [(int(RemapRange(corrected_pos[0], self.mapped_ranges[0][0], self.mapped_ranges[1][0], 0, self.gradient_canvas.width())), int(RemapRange(corrected_pos[1], self.mapped_ranges[0][1], self.mapped_ranges[1][1], 0, self.gradient_canvas.height())))]
+            step = 0
+            while (corrected_pos[0] < self.mapped_ranges[1][0] and corrected_pos[0] > self.mapped_ranges[0][0] and corrected_pos[1] < self.mapped_ranges[1][1] and corrected_pos[1] > self.mapped_ranges[0][1] and step < 10000):
+                nn_prep_pos = torch.unsqueeze(torch.from_numpy(np.array([corrected_pos], dtype=np.float32)), 0)
+                pos_potentials = self.nn(nn_prep_pos)
+                gradients = gradient(*self.nn(pos_potentials[1]))
+                gradient_vals = gradients[0].cpu().view(1, 1, 2).detach().numpy()
+                vx = gradient_vals[0][0][0]
+                vy = gradient_vals[0][0][1]
+                ux = vx / np.sqrt(vx ** 2 + vy ** 2)
+                uy = vy / np.sqrt(vx ** 2 + vy ** 2)
+                corrected_pos[0] += ux * .3
+                corrected_pos[1] += uy * .3
+                drop_path += [(int(RemapRange(corrected_pos[0], self.mapped_ranges[0][0], self.mapped_ranges[1][0], 0, self.gradient_canvas.width())), int(RemapRange(corrected_pos[1], self.mapped_ranges[0][1], self.mapped_ranges[1][1], 0, self.gradient_canvas.height())))]
+                step += 1
+            for point in range(len(drop_path) - 1):
+                painter = QtGui.QPainter(self.gradient_label.pixmap())
+                pen = painter.pen()
+                pen.setWidth(6)
+                pen.setColor(QtGui.QColor("#FFFFFF"))
+                painter.setPen(pen)
+                painter.drawLine(drop_path[point][0], drop_path[point][1], drop_path[point + 1][0], drop_path[point + 1][1])
+                painter.end()
+            self.update()
+            return
+
         if (not len(self.points)):
             return
+        if (self.path_mode_combobox.currentIndex() == 0):
+            painter = QtGui.QPainter(self.gradient_label.pixmap())
+            pen = painter.pen()
+            pen.setWidth(6)
+            pen.setColor(QtGui.QColor("#FF00FF"))
+            painter.setPen(pen)
+            painter.drawPoint(self.points[-1][0] + self.mapped_ranges[0][0], self.points[-1][1] + self.mapped_ranges[0][1])
+
+            pen = painter.pen()
+            pen.setWidth(6)
+            pen.setColor(QtGui.QColor("#FFFF00"))
+            painter.setPen(pen)
+            painter.drawPoint(self.points[0][0] + self.mapped_ranges[0][0], self.points[0][1] + self.mapped_ranges[0][1])
+            painter.end()
+            self.update()
+
         self.network_converted_points = list(map(lambda point: np.array((RemapRange(point[0], 0, self.network_canvas.width(), self.mapped_ranges[0][0], self.mapped_ranges[1][0]), RemapRange(point[1], 0, self.network_canvas.height(), self.mapped_ranges[0][1], self.mapped_ranges[1][1]))), self.points))
-        self.paths += [Path(self.network_converted_points)]
+        if (self.path_mode_combobox.currentIndex() == 0):
+            self.paths += [Path(self.network_converted_points)]
+        else:
+            self.obstacles += [Path(self.network_converted_points)]
         self.points = []
         self.prev_focus = -1
+
 
     def mouseMoveEvent(self, event):
 
@@ -545,11 +657,16 @@ class FieldInspector(QtWidgets.QMainWindow):
             painter = QtGui.QPainter(self.gradient_label.pixmap())
             pen = painter.pen()
             pen.setWidth(4)
-            pen.setColor(QtGui.QColor("#0000FF"))
+            if (self.path_mode_combobox.currentIndex() == 0):
+                pen.setColor(QtGui.QColor("#0000FF"))
+            elif (self.path_mode_combobox.currentIndex() == 1):
+                pen.setColor(QtGui.QColor("#000000"))
+            elif(self.path_mode_combobox.currentIndex() == 2):
+                return
             painter.setPen(pen)
-            painter.drawLine(self.points[-1][0], self.points[-1][1], corrected_pos[0], corrected_pos[1])
+            painter.drawLine(self.points[-1][0] + self.mapped_ranges[0][0], self.points[-1][1] + self.mapped_ranges[0][1], corrected_pos[0], corrected_pos[1])
             painter.end()
-        self.points += [corrected_pos]
+        self.points += [(corrected_pos[0] - self.mapped_ranges[0][0], corrected_pos[1] - self.mapped_ranges[0][1])]
         self.update()
 
 
@@ -560,4 +677,4 @@ class FieldInspectorApp(QtWidgets.QApplication):
         self.window.show()
         self.exec_()
 
-app = FieldInspectorApp((-2.05325, -2.65818), (2.06343, 4.15225), 1.0)
+app = FieldInspectorApp((-3, -3), (3, 3), 1.0)
