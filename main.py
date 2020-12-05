@@ -60,7 +60,7 @@ def gradients_mse(model_outputs, coords, gt_gradients):
     return gradients_loss
 
 def gradients_mse_with_coords(preds,gt):
-    return gradients_mse(preds[0],preds[1], gt) # TODO: CAUTION: these positions are inneffective when using stochastic sampling
+    return gradients_mse(preds[0],preds[1], gt)
 
 
 def normDiff(a, b):
@@ -136,7 +136,7 @@ class SineLayer(nn.Module):
 
 class Siren(nn.Module):
     def __init__(self, in_features, hidden_features, hidden_layers, out_features, outermost_linear=False,
-                 first_omega_0=8, hidden_omega_0=8.):
+                 first_omega_0=30, hidden_omega_0=30):
         super().__init__()
 
         self.net = []
@@ -202,23 +202,11 @@ class CrowdPathDataset(torch.utils.data.Dataset):
     def __init__(self, trajectories, obstacles=None,
                  multiplier=100):  # coords, dictionary, coord2keyFN, startPos, endPos, graph): #x_map, y_map, mask = None):
         'Initialization'
-        # self.coords = coords#[0]
-        ##self.keys = [coord2keyFN(coord) in coords] # make sure floating point numbers are transformed into their coordinate (pixel) representation
-        # self.dictionary = dictionary # a dictionary of lists, where each element in the list is the node. Keys are given by origin pixel of image
-        # self.getKey = coord2keyFN
-        # self.startPos = startPos
-        # self.endPos = endPos
-        # self.graph = graph
+        
         self.trajectories = trajectories
         self.obstacles = obstacles
         self.obstacle_multiplier = multiplier
         self.buffer = .1
-
-        # numItems = 0
-        # for key, value in sparse_a_star_path_test.items():
-        #   numItems += len(value) + 1 # Each list has n- 2 nodes from original path (missing first and last), so there are n-1 midpoints
-        # print("Total Midpoints:",numItems)
-        # self.totalpoints = numItems
 
         numItems = 0
         for _, trajectory in self.trajectories.items():
@@ -232,27 +220,10 @@ class CrowdPathDataset(torch.utils.data.Dataset):
         self.totalpoints = numItems
         print("Total Midpoints:", self.totalpoints)
 
-        # self.x_map = x_map
-        # self.y_map = y_map
-        # self.mask = None
-        # if mask is not None:
-        #   rows, cols = np.nonzero(mask)
-        #   mask_coordinate_list = np.array( [[[cols[i], rows[i]] for i in range(0, len(cols))]], dtype=np.float32 )  # x y format
-        #   print('mcl shape:',mask_coordinate_list.shape)
-        #   self.mask = mask_coordinate_list
-        # #self.mask = mask
 
     def __len__(self):
         'Denotes the total number of samples'
         return 1
-
-    # def GetPixelsFromTensor(self):
-    #   #pixels = self.coordinate_list[]
-    #   #temp = [[self.distance_map[int(x[1]),int(x[0])] for x in self.coordinate_list]]
-    #   #temp = self.distance_map[self.coordinate_list[:]]
-    #   #print('test',self.coordinate_list[0])
-    #   temp = np.array( [[[self.x_map[int(x[1]),int(x[0])], self.y_map[int(x[1]),int(x[0])]] for x in self.coordinate_list[0]]], dtype=np.float32 )
-    #   return RecenterDataForward(self.coordinate_list), temp
 
     def GetDirectionAlongTrajectory(self):
 
@@ -262,52 +233,17 @@ class CrowdPathDataset(torch.utils.data.Dataset):
 
         current_midpoint = 0
         for _, trajectory in self.trajectories.items():  # for every starting position
-            # key = self.getKey(coord)
-            # values = self.dictionary[key] # get the trajectory
-
-            # # now we need to sample a random point between two nodes in the line
-            # if len(trajectory) == 0:
-            #   interp = np.random.random(1)[0]
-            #   pos = avgDiff(  coord,  self.endPos,  interp)
-            #   dir = normDiff( coord,  self.endPos)
-            #   input[0,current_midpoint,0] = pos[0]
-            #   input[0,current_midpoint,1] = pos[1]
-            #   output[0,current_midpoint,0] = dir[0]
-            #   output[0,current_midpoint,1] = dir[1]
-            #   current_midpoint += 1
-
-            # else:
-            # interp = np.random.random(1)[0]
-            # pos = avgDiff(  coord,  self.graph.nodes(data='pos')[values[0]],  interp)
-            # dir = normDiff( coord,  self.graph.nodes(data='pos')[values[0]])
-            # input[0,current_midpoint,0] = pos[0]
-            # input[0,current_midpoint,1] = pos[1]
-            # output[0,current_midpoint,0] = dir[0]
-            # output[0,current_midpoint,1] = dir[1]
-            # current_midpoint += 1
-
+           
             for i in range(len(trajectory) - 1):
                 interp = np.random.random(1)[0]
                 pos = avgDiff(trajectory[i], trajectory[i + 1], interp)
 
-                # print(trajectory[i])
-                # print(trajectory[i+1])
-                # print(pos)
                 dir = normDiff(trajectory[i], trajectory[i + 1])
                 input[0, current_midpoint, 0] = pos[0]
                 input[0, current_midpoint, 1] = pos[1]
                 output[0, current_midpoint, 0] = dir[0]
                 output[0, current_midpoint, 1] = dir[1]
                 current_midpoint += 1
-
-                # interp = np.random.random(1)[0]
-                # pos = avgDiff(self.graph.nodes(data='pos')[values[-1]], self.endPos, interp)
-                # dir = normDiff(self.graph.nodes(data='pos')[values[-1]], self.endPos)
-                # input[0,current_midpoint,0] = pos[0]
-                # input[0,current_midpoint,1] = pos[1]
-                # output[0,current_midpoint,0] = dir[0]
-                # output[0,current_midpoint,1] = dir[1]
-                # current_midpoint += 1
 
         if self.obstacles is not None:
             for k in range(self.obstacle_multiplier):
@@ -367,12 +303,11 @@ def test(network, test_loader, loss_function):
     network.eval()  # updates any network layers that behave differently in training and execution
     test_loss = 0
     num_batches = 0
-    with torch.no_grad():
-        for data, target in test_loader:
-            output = network(data)
-            zero = torch.tensor(np.zeros(target.shape, dtype=np.float), dtype=torch.float32)
-            test_loss += loss_function(output, target).item()
-            num_batches += 1
+    for data, target in test_loader:
+        output = network(data)
+        zero = torch.tensor(np.zeros(target.shape, dtype=np.float), dtype=torch.float32)
+        test_loss += loss_function(output, target).item()
+        num_batches += 1
     test_loss /= num_batches
     # print('\nTest set: Avg. loss: {:.4f})\n'.format(test_loss))
     return test_loss
@@ -531,10 +466,12 @@ class FieldInspector(QtWidgets.QMainWindow):
         conv_paths = {}
         for path in range(len(self.paths)):
             conv_paths[path] = list(map(lambda point: (point[0], point[1]), self.paths[path].sampled_points[::5]))
+            # for p in conv_paths[path]:
+                # print('point',p)
         conv_obstacles = {}
         for obstacle in range(len(self.obstacles)):
             conv_obstacles[obstacle] = list(map(lambda point: (point[0], point[1]), self.obstacles[obstacle].sampled_points[::5]))
-        num_epochs = 100
+        num_epochs = 1000
         learning_rate = 1e-4
         loss_function = gradients_mse_with_coords
         train_data_set = CrowdPathDataset(conv_paths, conv_obstacles, multiplier=1)
@@ -543,6 +480,7 @@ class FieldInspector(QtWidgets.QMainWindow):
 
         for epoch in range(num_epochs):
             avg_loss = train(self.nn, train_data_generator, loss_function, optimizer)
+            print('{}/{} : {}'.format(epoch+1,num_epochs,avg_loss))
 
         self.generate_network_field()
         self.paths = []
@@ -562,7 +500,11 @@ class FieldInspector(QtWidgets.QMainWindow):
     def generate_network_field(self):
         sample_res = (self.mapped_ranges[1][0] - self.mapped_ranges[0][0]) / self.xline_samples
         num_y_samples = int((self.mapped_ranges[1][1] - self.mapped_ranges[0][0]) / sample_res)
-        sample_coords_offset = [np.array(((i + 0.5) * sample_res, (j + 0.5) * sample_res)) for i in range(self.xline_samples) for j in range(num_y_samples)]
+        
+        RecenterForward = lambda x : RecenterDataForwardWithShape(x,self.xline_samples,num_y_samples)
+        
+        sample_coords_offset = np.array( [[ [RecenterForward(j+.5),RecenterForward(i+.5)] for i in range(num_y_samples) for j in range(self.xline_samples) ]], dtype=np.float32)
+        #sample_coords_offset = [np.array(((i + 0.5) * sample_res, (j + 0.5) * sample_res)) for i in range(self.xline_samples) for j in range(num_y_samples)]
         sample_coords_nn_preped = torch.unsqueeze(torch.from_numpy(np.array(sample_coords_offset, dtype=np.float32)), 0)
         potential_samples = self.nn(sample_coords_nn_preped)
         ax = self.gradient_plot.figure.subplots(1, 1)
@@ -583,16 +525,25 @@ class FieldInspector(QtWidgets.QMainWindow):
         #print(gradient_potential_samples.shape)
         if (self.gradient_checkbox.isChecked()):
             coord_x, coord_y = np.meshgrid(list(map(lambda v: RemapRange(v + 0.5, 0, self.xline_samples, self.mapped_ranges[0][0], self.mapped_ranges[1][0]), range(self.xline_samples))), list(map(lambda v: RemapRange(v + 0.5, 0, num_y_samples, self.mapped_ranges[0][1], self.mapped_ranges[1][1]), range(num_y_samples))))
-            vx = gradient_potential_samples[:,:,0].flatten('F')
-            vy = gradient_potential_samples[:,:,1].flatten('F')
+            #coord_x, coord_y = np.meshgrid(list(map(lambda v: RecenterForward(v+0.5), range(self.xline_samples))), list(map(lambda v: RecenterForward(v + 0.5), range(num_y_samples))))
+            vx = gradient_potential_samples[:,:,0]
+            vy = gradient_potential_samples[:,:,1]
             ux = vx/np.sqrt(vx**2 + vy**2)
             uy = vy/np.sqrt(vx**2 + vy**2)
-            ax.quiver(coord_x, coord_y, ux, uy, color='red')
+            #ax.quiver(coord_x, coord_y, ux, uy, color='red')
+            ax.quiver(coord_x, coord_y, ux, -uy, color='red')
         self.gradient_plot.figure.savefig("temp_fig.png")
         self.gradient_canvas = QtGui.QPixmap("temp_fig.png")
         self.gradient_label.setPixmap(self.gradient_canvas)
 
     def mouseReleaseEvent(self, event):
+    
+    
+        sample_res = (self.mapped_ranges[1][0] - self.mapped_ranges[0][0]) / self.xline_samples
+        num_y_samples = int((self.mapped_ranges[1][1] - self.mapped_ranges[0][0]) / sample_res)
+        
+        RecenterForward = lambda x : RecenterDataForwardWithShape(x,self.xline_samples,num_y_samples)
+    
         if (self.path_mode_combobox.currentIndex() == 2):
             corrected_pos = np.array((self.mapped_ranges[0][0] + (self.mapped_ranges[1][0] - self.mapped_ranges[0][0]) * (event.x() - self.gradient_label.x()) / self.gradient_canvas.width(), self.mapped_ranges[0][1] + (self.mapped_ranges[1][1] - self.mapped_ranges[0][1]) * (event.y() - self.gradient_label.y()) / self.gradient_canvas.height()))
             drop_path = [(int(RemapRange(corrected_pos[0], self.mapped_ranges[0][0], self.mapped_ranges[1][0], 0, self.gradient_canvas.width())), int(RemapRange(corrected_pos[1], self.mapped_ranges[0][1], self.mapped_ranges[1][1], 0, self.gradient_canvas.height())))]
@@ -639,7 +590,12 @@ class FieldInspector(QtWidgets.QMainWindow):
             painter.end()
             self.update()
 
-        self.network_converted_points = list(map(lambda point: np.array((RemapRange(point[0], 0, self.network_canvas.width(), self.mapped_ranges[0][0], self.mapped_ranges[1][0]), RemapRange(point[1], 0, self.network_canvas.height(), self.mapped_ranges[0][1], self.mapped_ranges[1][1]))), self.points))
+        #self.network_converted_points = list(map(lambda point: np.array((RemapRange(point[0], 0, self.network_canvas.width(), self.mapped_ranges[0][0], self.mapped_ranges[1][0]), RemapRange(point[1], 0, self.network_canvas.height(), self.mapped_ranges[0][1], self.mapped_ranges[1][1]))), self.points))
+        
+        self.network_converted_points = list(map(lambda point: np.array((RecenterDataForwardWithShape(point[0], self.network_canvas.width(), self.network_canvas.height()), RecenterDataForwardWithShape(point[1], self.network_canvas.width(), self.network_canvas.height()))), self.points))
+        
+        #self.network_converted_points = list(map(lambda point: np.array((RecenterForward(point[0]), RecenterForward(point[1], ))), self.points))
+        
         if (self.path_mode_combobox.currentIndex() == 0):
             self.paths += [Path(self.network_converted_points)]
         else:
